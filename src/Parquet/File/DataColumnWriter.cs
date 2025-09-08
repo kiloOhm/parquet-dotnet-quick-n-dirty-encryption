@@ -43,7 +43,8 @@ namespace Parquet.File {
         }
 
         public async Task<ColumnChunk> WriteAsync(
-            FieldPath fullPath, DataColumn column,
+            FieldPath fullPath,
+            DataColumn column,
             CancellationToken cancellationToken = default) {
 
             // Num_values in the chunk does include null values - I have validated this by dumping spark-generated file.
@@ -73,7 +74,7 @@ namespace Parquet.File {
             PageHeader ph, MemoryStream data,
             ColumnSizes cs,
             CancellationToken cancellationToken) {
-            
+
             using IronCompress.IronCompressResult compressedData = _compressionMethod == CompressionMethod.None
                 ? new IronCompress.IronCompressResult(data.ToArray(), Codec.Snappy, false)
                 : Compressor.Compress(_compressionMethod, data.ToArray(), _compressionLevel);
@@ -90,6 +91,16 @@ namespace Parquet.File {
 
             await headerMs.CopyToAsync(_stream);
 
+            if(!string.IsNullOrEmpty(_options.EncryptionKey) &&
+                this._footer.CustomMetadata.TryGetValue("AES_IV", out string? iv) &&
+                !string.IsNullOrEmpty(iv))
+            {
+                byte[] ivBytes = Convert.FromBase64String(iv);
+                byte[] keyBytes = Convert.FromBase64String(_options.EncryptionKey);
+                // encrypt
+                Encryptor.AES_CTR_inPlace(headerMs.GetBuffer().AsSpan(0, headerSize), keyBytes, ivBytes);
+            }
+
             // write data
             _stream.WriteSpan(compressedData);
 
@@ -103,7 +114,7 @@ namespace Parquet.File {
         private async Task<ColumnSizes> WriteColumnAsync(ColumnChunk chunk, DataColumn column,
            SchemaElement tse,
            CancellationToken cancellationToken = default) {
-
+            
             column.Field.EnsureAttachedToSchema(nameof(column));
 
             var r = new ColumnSizes();

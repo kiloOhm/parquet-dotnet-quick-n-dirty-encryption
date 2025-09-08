@@ -69,6 +69,7 @@ namespace Parquet {
         public async Task WriteColumnAsync(DataColumn column,
             Dictionary<string, string>? customMetadata,
             CancellationToken cancellationToken = default) {
+
             if(column == null)
                 throw new ArgumentNullException(nameof(column));
 

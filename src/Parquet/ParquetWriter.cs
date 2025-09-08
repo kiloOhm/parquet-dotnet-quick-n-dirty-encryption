@@ -129,6 +129,31 @@ namespace Parquet {
         private Task WriteMagicAsync() => Stream.WriteAsync(MagicBytes, 0, MagicBytes.Length);
 
         private void DisposeCore() {
+            _footer ??= new ThriftFooter(_schema, 0);
+
+            if(!string.IsNullOrEmpty(_formatOptions.EncryptionKey)) {
+                // generate iv nonce
+                byte[] iv_bytes = Encryptor.GenerateNonce();
+                    _formatOptions.AES_IV_BYTES = iv_bytes;
+                byte[] key_bytes = _formatOptions.ENC_KEY_BYTES
+                    ?? throw new IOException("file is encrypted but no encryption key could be derived");
+                var newMeta = new Dictionary<string, string>();
+                // encrypt existing metadata values
+                if(_footer!.CustomMetadata != null) {
+                    foreach(KeyValuePair<string, string> kvp in _footer.CustomMetadata) {
+                        byte[] kvpKeyBytes = System.Text.Encoding.UTF8.GetBytes(kvp.Key);
+                        byte[] valueBytes = System.Text.Encoding.UTF8.GetBytes(kvp.Value);
+                        Encryptor.AES_CTR_inPlace(kvpKeyBytes, key_bytes, iv_bytes);
+                        Encryptor.AES_CTR_inPlace(valueBytes, key_bytes, iv_bytes);
+                        string encKey = Convert.ToBase64String(kvpKeyBytes);
+                        string encValue = Convert.ToBase64String(valueBytes);
+                        newMeta.Add(encKey, encValue);
+                    }
+                }
+                newMeta.Add("AES_IV", Convert.ToBase64String(iv_bytes));
+                _footer!.CustomMetadata = newMeta;
+            }
+
             if(_dataWritten) {
                 //update row count (on append add row count to existing metadata)
                 _footer!.Add(_openedWriters.Sum(w => w.RowCount ?? 0));

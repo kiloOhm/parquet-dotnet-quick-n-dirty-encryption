@@ -41,7 +41,6 @@ namespace Parquet.Test {
                 using(ParquetRowGroupWriter rg = writer.CreateRowGroup()) {
                     await rg.WriteColumnAsync(new DataColumn(id, new int[] { 3 }));
                 }
-
             }
 
             //read the file back and validate

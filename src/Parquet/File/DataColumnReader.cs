@@ -105,6 +105,14 @@ namespace Parquet.File {
             }
             while(remainingBytes != 0);
 
+            byte[]? iv = this._options.AES_IV_BYTES;
+            byte[]? key = this._options.ENC_KEY_BYTES;
+
+            if(iv != null && key != null) {
+                // decrypt
+                Encryptor.AES_CTR_inPlace(data.AsSpan(0, ph.CompressedPageSize), key, iv);
+            }
+
             if(_thriftColumnChunk.MetaData!.Codec == CompressionCodec.UNCOMPRESSED) {
                 return new IronCompress.IronCompressResult(data, Codec.Snappy, false, ph.CompressedPageSize, ArrayPool<byte>.Shared);
             }
@@ -127,6 +135,14 @@ namespace Parquet.File {
                 remainingBytes -= bytesRead;
             }
             while(remainingBytes != 0);
+            
+            byte[]? iv = this._options.AES_IV_BYTES;
+            byte[]? key = this._options.ENC_KEY_BYTES;
+
+            if(iv != null && key != null) {
+                // decrypt
+                Encryptor.AES_CTR_inPlace(data.AsSpan(0, pageSize), key, iv);
+            }
 
             return new IronCompress.IronCompressResult(data, Codec.Snappy, false, pageSize, ArrayPool<byte>.Shared);
         }

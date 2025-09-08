@@ -40,6 +40,40 @@ namespace Parquet {
 
             //read metadata instantly, now
             _meta = await ReadMetadataAsync(cancellationToken);
+
+            // extract IV and decrypt metadata if needed
+            string? iv = _meta.KeyValueMetadata?.Find(kv => kv.Key == "AES_IV")?.Value;
+            if(!string.IsNullOrEmpty(iv)) {
+                if(string.IsNullOrEmpty(_parquetOptions.EncryptionKey)) { 
+                    throw new IOException("file is encrypted but no encryption key was provided");
+                } else {
+                    byte[] ivBytes = Convert.FromBase64String(iv!);
+                    _parquetOptions.AES_IV_BYTES = ivBytes;
+                    byte[] keyBytes = _parquetOptions.ENC_KEY_BYTES
+                        ?? throw new IOException("file is encrypted but no encryption key could be derived");
+                    var newKVMetadata = new List<KeyValue>();
+                    if(_meta.KeyValueMetadata!.Count > 1) {
+                        foreach(KeyValue kv in _meta.KeyValueMetadata) {
+                            if(kv.Key == "AES_IV")
+                                continue;
+                            byte[] encryptedKeyBytes = Convert.FromBase64String(kv.Value!);
+                            Encryptor.AES_CTR_inPlace(encryptedKeyBytes, keyBytes, ivBytes);
+                            byte[] encryptedValueBytes = Convert.FromBase64String(kv.Value!);
+                            Encryptor.AES_CTR_inPlace(encryptedValueBytes, keyBytes, ivBytes);
+                            newKVMetadata.Add(new KeyValue {
+                                Key = System.Text.Encoding.UTF8.GetString(encryptedKeyBytes),
+                                Value = System.Text.Encoding.UTF8.GetString(encryptedValueBytes)
+                            });
+                        }
+                    }
+                    _meta.KeyValueMetadata = newKVMetadata;
+                }
+            } else {
+                if(!string.IsNullOrEmpty(_parquetOptions.EncryptionKey)) {
+                    throw new IOException("an encryption key was provided but the file is not encrypted");
+                }
+            }
+
             _thriftFooter = new ThriftFooter(_meta);
 
             InitRowGroupReaders();

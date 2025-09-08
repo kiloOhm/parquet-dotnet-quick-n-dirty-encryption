@@ -6,7 +6,27 @@ namespace Parquet {
     /// Parquet options
     /// </summary>
     public class ParquetOptions {
-        
+
+        /// <summary>
+        /// Gets or sets the encryption key used for encrypting or decrypting Parquet files.
+        /// </summary>
+        public string? EncryptionKey { get; set; } = string.Empty;
+
+        internal byte[]? AES_IV_BYTES = null;
+
+        private byte[]? _enc_key_bytes;
+
+        internal byte[]? ENC_KEY_BYTES {
+            get {
+                if(_enc_key_bytes != null)
+                    return _enc_key_bytes;
+                if(string.IsNullOrEmpty(EncryptionKey) || AES_IV_BYTES == null)
+                    return null;
+                _enc_key_bytes = Encryptor.DeriveKeyPbkdf2(EncryptionKey, AES_IV_BYTES);
+                return _enc_key_bytes;
+            }
+        }
+
         /// <summary>
         /// When true byte arrays will be treated as UTF-8 strings on read
         /// </summary>

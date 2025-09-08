@@ -224,7 +224,7 @@ namespace Parquet.Test {
             
             //DECIMAL(9, 5)
             DataColumn decimal_p9_s5 = cols[5];
-            var data = (decimal?[])decimal_p9_s5.Data;
+            decimal?[] data = (decimal?[])decimal_p9_s5.Data;
             Assert.Equal(1.02232M, data[7]);
             Assert.Equal(-27.427M, data[344]);
 

@@ -20,6 +20,7 @@ namespace Parquet {
 #pragma warning restore IDE1006
 
         private readonly Stream _fileStream;
+        private BinaryWriter? _binaryWriter;
 
         internal ParquetActor(Stream? fileStream) =>
             _fileStream = fileStream ?? throw new ArgumentNullException(nameof(fileStream));

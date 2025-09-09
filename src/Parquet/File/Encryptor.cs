@@ -86,11 +86,18 @@ public static class Encryptor {
         if (keySizeBytes != 16 && keySizeBytes != 24 && keySizeBytes != 32)
             throw new ArgumentOutOfRangeException(nameof(keySizeBytes), "Must be 16, 24, or 32.");
 
+#if NETSTANDARD2_0 || NETFRAMEWORK
+        using var pbkdf2 = new Rfc2898DeriveBytes(
+            password: password,
+            salt: salt,
+            iterations: iterations);
+#else
         using var pbkdf2 = new Rfc2898DeriveBytes(
             password: password,
             salt: salt,
             iterations: iterations,
             hashAlgorithm: HashAlgorithmName.SHA256);
+#endif
 
         return pbkdf2.GetBytes(keySizeBytes);
     }
@@ -103,7 +110,14 @@ public static class Encryptor {
     public static byte[] GenerateSalt(int size = 16)
     {
         byte[] salt = new byte[size];
+#if NETSTANDARD2_0 || NETFRAMEWORK
+        using (var rng = RandomNumberGenerator.Create())
+        {
+            rng.GetBytes(salt);
+        }
+#else
         RandomNumberGenerator.Fill(salt);
+#endif
         return salt;
     }
 }

@@ -106,7 +106,7 @@ namespace Parquet.File {
             await headerMs.CopyToAsync(_stream);
 
             // write data
-            _stream.Write(payload);
+            _stream.Write(payload, 0, payload.Length);
 
             cs.CompressedSize += headerSize;
             cs.UncompressedSize += headerSize;

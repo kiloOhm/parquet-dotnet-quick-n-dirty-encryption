@@ -4,7 +4,8 @@
         <TargetFrameworks Condition="'$(LATEST_NET_ONLY)' != ''">net8.0</TargetFrameworks>
         <TargetFrameworks Condition="'$(LATEST_NET_ONLY)' == ''">net8.0;netstandard2.1;netstandard2.0</TargetFrameworks>
         <Company></Company>
-        <PackageId>Parquet.Net</PackageId>
+        <PackageId>Parquet.Net.Lukas</PackageId>
+        <Version>1.0.5</Version>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -23,11 +24,11 @@
         <PublishRepositoryUrl>true</PublishRepositoryUrl>
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-        <Authors>Ivan Gavryliuk (@aloneguid)</Authors>
+        <Authors>Ivan Gavryliuk (@aloneguid), Lukas Wicke</Authors>
         <Product />
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageProjectUrl>https://github.com/aloneguid/parquet-dotnet</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/aloneguid/parquet-dotnet</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/kiloOhm/parquet-dotnet-quick-n-dirty-encryption/tree/quick-n-dirty</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/kiloOhm/parquet-dotnet-quick-n-dirty-encryption/tree/quick-n-dirty</RepositoryUrl>
         <RepositoryType>GitHub</RepositoryType>
         <PackageIcon>icon.png</PackageIcon>
         <Description>Fully managed Apache Parquet implementation.</Description>

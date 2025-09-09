@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Threading;
 using Parquet.Schema;
 using Parquet.Meta;
+using System.Linq;
 
 namespace Parquet {
     /// <summary>
@@ -56,7 +57,7 @@ namespace Parquet {
                         foreach(KeyValue kv in _meta.KeyValueMetadata) {
                             if(kv.Key == "AES_IV")
                                 continue;
-                            byte[] encryptedKeyBytes = Convert.FromBase64String(kv.Value!);
+                            byte[] encryptedKeyBytes = Convert.FromBase64String(kv.Key!);
                             Encryptor.AES_CTR_inPlace(encryptedKeyBytes, keyBytes, ivBytes);
                             byte[] encryptedValueBytes = Convert.FromBase64String(kv.Value!);
                             Encryptor.AES_CTR_inPlace(encryptedValueBytes, keyBytes, ivBytes);
@@ -65,6 +66,10 @@ namespace Parquet {
                                 Value = System.Text.Encoding.UTF8.GetString(encryptedValueBytes)
                             });
                         }
+                    }
+
+                    if(newKVMetadata.Select(kv => kv.Key).Distinct().Count() != newKVMetadata.Count) {
+                        throw new Exception("duplicate keys in decrypted metadata: " + string.Join(", ", newKVMetadata.Select(kv => kv.Key)));
                     }
                     _meta.KeyValueMetadata = newKVMetadata;
                 }

@@ -18,11 +18,10 @@ namespace Parquet {
 
         internal byte[]? ENC_KEY_BYTES {
             get {
-                if(_enc_key_bytes != null)
-                    return _enc_key_bytes;
-                if(string.IsNullOrEmpty(EncryptionKey) || AES_IV_BYTES == null)
+                if(string.IsNullOrEmpty(EncryptionKey) || AES_IV_BYTES == null) {
                     return null;
-                _enc_key_bytes = Encryptor.DeriveKeyPbkdf2(EncryptionKey, AES_IV_BYTES);
+                }
+                _enc_key_bytes ??= Encryptor.DeriveKeyPbkdf2(EncryptionKey!, AES_IV_BYTES);
                 return _enc_key_bytes;
             }
         }

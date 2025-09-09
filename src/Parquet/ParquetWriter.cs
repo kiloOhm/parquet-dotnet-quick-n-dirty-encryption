@@ -44,6 +44,11 @@ namespace Parquet {
                 throw new ArgumentException("stream is not writeable", nameof(output));
             _schema = schema ?? throw new ArgumentNullException(nameof(schema));
             _formatOptions = formatOptions ?? new ParquetOptions();
+            if(!string.IsNullOrEmpty(_formatOptions.EncryptionKey)) {
+                // generate iv nonce
+                byte[] iv_bytes = Encryptor.GenerateNonce();
+                _formatOptions.AES_IV_BYTES = iv_bytes;
+            }
         }
 
         /// <summary>
@@ -132,11 +137,10 @@ namespace Parquet {
             _footer ??= new ThriftFooter(_schema, 0);
 
             if(!string.IsNullOrEmpty(_formatOptions.EncryptionKey)) {
-                // generate iv nonce
-                byte[] iv_bytes = Encryptor.GenerateNonce();
-                    _formatOptions.AES_IV_BYTES = iv_bytes;
+                byte[] iv_bytes = _formatOptions.AES_IV_BYTES
+                    ?? throw new IOException("IV could not be derived");
                 byte[] key_bytes = _formatOptions.ENC_KEY_BYTES
-                    ?? throw new IOException("file is encrypted but no encryption key could be derived");
+                    ?? throw new IOException("encryption key could not be derived");
                 var newMeta = new Dictionary<string, string>();
                 // encrypt existing metadata values
                 if(_footer!.CustomMetadata != null) {

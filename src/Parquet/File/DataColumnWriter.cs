@@ -78,9 +78,23 @@ namespace Parquet.File {
             using IronCompress.IronCompressResult compressedData = _compressionMethod == CompressionMethod.None
                 ? new IronCompress.IronCompressResult(data.ToArray(), Codec.Snappy, false)
                 : Compressor.Compress(_compressionMethod, data.ToArray(), _compressionLevel);
-            
+
+            int payloadLen = compressedData.AsSpan().Length; // Prefer a real "Length" property if IronCompress has it
+            Span<byte> payloadSpan = compressedData.AsSpan().Slice(0, payloadLen);
+
             ph.UncompressedPageSize = (int)data.Length;
-            ph.CompressedPageSize = compressedData.AsSpan().Length;
+            ph.CompressedPageSize = payloadLen;
+
+            byte[]? iv_bytes = this._options.AES_IV_BYTES;
+            byte[]? key_bytes = this._options.ENC_KEY_BYTES;
+
+            // Copy payloadSpan to a byte[] so it can be used after await
+            byte[] payload = payloadSpan.ToArray();
+
+            if (iv_bytes != null && key_bytes != null)
+            {
+                Encryptor.AES_CTR_inPlace(payload, key_bytes, iv_bytes);
+            }
 
             //write the header in
             using MemoryStream headerMs = _rmsMgr.GetStream();
@@ -91,18 +105,8 @@ namespace Parquet.File {
 
             await headerMs.CopyToAsync(_stream);
 
-            if(!string.IsNullOrEmpty(_options.EncryptionKey) &&
-                this._footer.CustomMetadata.TryGetValue("AES_IV", out string? iv) &&
-                !string.IsNullOrEmpty(iv))
-            {
-                byte[] ivBytes = Convert.FromBase64String(iv);
-                byte[] keyBytes = Convert.FromBase64String(_options.EncryptionKey);
-                // encrypt
-                Encryptor.AES_CTR_inPlace(headerMs.GetBuffer().AsSpan(0, headerSize), keyBytes, ivBytes);
-            }
-
             // write data
-            _stream.WriteSpan(compressedData);
+            _stream.Write(payload);
 
             cs.CompressedSize += headerSize;
             cs.UncompressedSize += headerSize;

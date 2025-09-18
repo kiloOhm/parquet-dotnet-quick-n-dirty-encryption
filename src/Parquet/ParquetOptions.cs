@@ -6,12 +6,6 @@ namespace Parquet {
     /// Parquet options
     /// </summary>
     public class ParquetOptions {
-
-        /// <summary>
-        /// Gets or sets the encryption key used for encrypting or decrypting Parquet files.
-        /// </summary>
-        public string? EncryptionKey { get; set; } = string.Empty;
-
         internal byte[]? AES_IV_BYTES = null;
 
         private byte[]? _enc_key_bytes;
@@ -25,6 +19,16 @@ namespace Parquet {
                 return _enc_key_bytes;
             }
         }
+
+        /// <summary>
+        /// Gets or sets the encryption key used for encrypting or decrypting Parquet files.
+        /// </summary>
+        public string? EncryptionKey { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether Bloom filters are used for columns.
+        /// </summary>
+        public bool EnableBloomFilters { get; set; } = true;
 
         /// <summary>
         /// When true byte arrays will be treated as UTF-8 strings on read

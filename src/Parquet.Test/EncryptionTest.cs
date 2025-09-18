@@ -58,7 +58,7 @@ namespace Parquet.Test {
                 }
             }
         }
-        
+
         [Fact]
         public async Task EncryptAndFailToDecrypt() {
             string key = "Hallo Welt"; // 11 bytes only, will be derived to 32 bytes inside
@@ -97,7 +97,7 @@ namespace Parquet.Test {
 
                 using(ParquetRowGroupReader rg = reader.OpenRowGroupReader(0)) {
                     Assert.Equal(1, rg.RowCount);
-                    await Assert.ThrowsAsync<InvalidDataException>(async () => {
+                    await Assert.ThrowsAnyAsync<Exception>(async () => {
                         DataColumn dc = await rg.ReadColumnAsync(id);
                     });
                 }

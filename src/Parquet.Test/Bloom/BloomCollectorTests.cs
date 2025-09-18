@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Linq;
 using Parquet.Bloom;
 using Xunit;

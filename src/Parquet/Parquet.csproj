@@ -5,7 +5,7 @@
         <TargetFrameworks Condition="'$(LATEST_NET_ONLY)' == ''">net8.0;netstandard2.1;netstandard2.0</TargetFrameworks>
         <Company></Company>
         <PackageId>costdata.Parquet.Net</PackageId>
-        <Version>1.0.1</Version>
+        <Version>1.0.2</Version>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

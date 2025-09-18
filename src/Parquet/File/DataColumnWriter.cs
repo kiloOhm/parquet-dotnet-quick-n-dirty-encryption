@@ -92,9 +92,6 @@ namespace Parquet.File {
             byte[]? iv_bytes = this._options.AES_IV_BYTES;
             byte[]? key_bytes = this._options.ENC_KEY_BYTES;
 
-            // Copy payloadSpan to a byte[] so it can be used after await
-            byte[] payload = payloadSpan.ToArray();
-
             if (iv_bytes != null && key_bytes != null) {
                 Encryptor.AES_CTR_inPlace(payload, key_bytes, iv_bytes);
             }

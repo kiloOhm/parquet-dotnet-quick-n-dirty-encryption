@@ -14,7 +14,7 @@ namespace Parquet.Serialization {
         /// <summary>
         /// Page compression method
         /// </summary>
-        public CompressionMethod CompressionMethod { get; set; } = CompressionMethod.Snappy;
+        public CompressionMethod CompressionMethod { get; set; } = CompressionMethod.Gzip;
 
 
         /// <summary>

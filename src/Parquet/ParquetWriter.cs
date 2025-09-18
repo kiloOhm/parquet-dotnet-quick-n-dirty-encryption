@@ -22,9 +22,9 @@ namespace Parquet {
         private readonly List<ParquetRowGroupWriter> _openedWriters = new List<ParquetRowGroupWriter>();
 
         /// <summary>
-        /// Type of compression to use, defaults to <see cref="CompressionMethod.Snappy"/>
+        /// Type of compression to use, defaults to <see cref="CompressionMethod.Gzip"/>
         /// </summary>
-        public CompressionMethod CompressionMethod { get; set; } = CompressionMethod.Snappy;
+        public CompressionMethod CompressionMethod { get; set; } = CompressionMethod.Gzip;
 
         /// <summary>
         /// Level of compression

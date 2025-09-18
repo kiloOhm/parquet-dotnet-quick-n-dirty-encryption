@@ -1,16 +1,16 @@
 ﻿using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using IronCompress;
 using Parquet.Data;
-using Parquet.Schema;
 using Parquet.Encodings;
+using Parquet.Extensions;
 using Parquet.Meta;
 using Parquet.Meta.Proto;
-using Parquet.Extensions;
+using Parquet.Schema;
 
 namespace Parquet.File {
 
@@ -93,11 +93,11 @@ namespace Parquet.File {
             return column;
         }
 
-        private async Task<IronCompress.IronCompressResult> ReadPageDataAsync(PageHeader ph) {
-
+        private async Task<RentedBytes> ReadPageDataAsync(PageHeader ph) {
             byte[] data = ArrayPool<byte>.Shared.Rent(ph.CompressedPageSize);
 
-            int totalBytesRead = 0, remainingBytes = ph.CompressedPageSize;
+            int totalBytesRead = 0;
+            int remainingBytes = ph.CompressedPageSize;
             do {
                 int bytesRead = await _inputStream.ReadAsync(data, totalBytesRead, remainingBytes);
                 totalBytesRead += bytesRead;
@@ -105,8 +105,8 @@ namespace Parquet.File {
             }
             while(remainingBytes != 0);
 
-            byte[]? iv = this._options.AES_IV_BYTES;
-            byte[]? key = this._options.ENC_KEY_BYTES;
+            byte[]? iv = _options.AES_IV_BYTES;
+            byte[]? key = _options.ENC_KEY_BYTES;
 
             if(iv != null && key != null) {
                 // decrypt
@@ -114,37 +114,52 @@ namespace Parquet.File {
             }
 
             if(_thriftColumnChunk.MetaData!.Codec == CompressionCodec.UNCOMPRESSED) {
-                return new IronCompress.IronCompressResult(data, Codec.Snappy, false, ph.CompressedPageSize, ArrayPool<byte>.Shared);
+                // Just pass through the rented buffer; caller will Dispose() to return it.
+                return new RentedBytes(data, ph.CompressedPageSize, ArrayPool<byte>.Shared);
             }
 
-            return Compressor.Decompress((CompressionMethod)(int)_thriftColumnChunk.MetaData.Codec,
-                data.AsSpan(0, ph.CompressedPageSize),
-                ph.UncompressedPageSize);
+            // GZip-only decompression
+            CompressionMethod method = (CompressionMethod)(int)_thriftColumnChunk.MetaData.Codec;
+            if(method != CompressionMethod.Gzip) {
+                // Return rented first, then throw to avoid leaking the buffer.
+                ArrayPool<byte>.Shared.Return(data);
+                throw new NotSupportedException($"Compression codec '{_thriftColumnChunk.MetaData.Codec}' is not supported. Only GZip is supported.");
+            }
+
+            byte[] decompressed = Compressor.Decompress(method, data.AsSpan(0, ph.CompressedPageSize), ph.UncompressedPageSize);
+
+            // Return the rented compressed buffer now that we’re done with it.
+            ArrayPool<byte>.Shared.Return(data);
+
+            // Hand back decompressed bytes (not rented).
+            return new RentedBytes(decompressed, decompressed.Length, null);
         }
 
-        private async Task<IronCompress.IronCompressResult> ReadPageDataV2Async(PageHeader ph) {
-
+        private async Task<RentedBytes> ReadPageDataV2Async(PageHeader ph) {
             int pageSize = ph.CompressedPageSize;
 
             byte[] data = ArrayPool<byte>.Shared.Rent(pageSize);
 
-            int totalBytesRead = 0, remainingBytes = pageSize;
+            int totalBytesRead = 0;
+            int remainingBytes = pageSize;
             do {
                 int bytesRead = await _inputStream.ReadAsync(data, totalBytesRead, remainingBytes);
                 totalBytesRead += bytesRead;
                 remainingBytes -= bytesRead;
             }
             while(remainingBytes != 0);
-            
-            byte[]? iv = this._options.AES_IV_BYTES;
-            byte[]? key = this._options.ENC_KEY_BYTES;
+
+            byte[]? iv = _options.AES_IV_BYTES;
+            byte[]? key = _options.ENC_KEY_BYTES;
 
             if(iv != null && key != null) {
                 // decrypt
                 Encryptor.AES_CTR_inPlace(data.AsSpan(0, pageSize), key, iv);
             }
 
-            return new IronCompress.IronCompressResult(data, Codec.Snappy, false, pageSize, ArrayPool<byte>.Shared);
+            // V2 helper just returns the raw (possibly still-compressed) bytes;
+            // callers decide whether to decompress based on the header flags.
+            return new RentedBytes(data, pageSize, ArrayPool<byte>.Shared);
         }
 
         private async ValueTask ReadDictionaryPage(PageHeader ph, PackedColumn pc) {
@@ -153,15 +168,16 @@ namespace Parquet.File {
                 throw new InvalidOperationException("dictionary already read");
 
             //Dictionary page format: the entries in the dictionary - in dictionary order - using the plain encoding.
-            using IronCompress.IronCompressResult bytes = await ReadPageDataAsync(ph);
+            using(RentedBytes bytes = await ReadPageDataAsync(ph)) {
 
-            // Dictionary should not contains null values
-            Array dictionary = _dataField.CreateArray(ph.DictionaryPageHeader!.NumValues);
+                Array dictionary = _dataField.CreateArray(ph.DictionaryPageHeader!.NumValues);
 
-            ParquetPlainEncoder.Decode(dictionary, 0, ph.DictionaryPageHeader.NumValues,
-                   _schemaElement!, bytes.AsSpan(), out int dictionaryOffset);
+                ParquetPlainEncoder.Decode(
+                    dictionary, 0, ph.DictionaryPageHeader.NumValues,
+                    _schemaElement!, bytes.AsSpan(), out int dictionaryOffset);
 
-            pc.AssignDictionary(dictionary);
+                pc.AssignDictionary(dictionary);
+            }
         }
 
         private long GetFileOffset() =>
@@ -175,45 +191,42 @@ namespace Parquet.File {
                 .Min();
 
         private async Task ReadDataPageV1Async(PageHeader ph, PackedColumn pc) {
-            using IronCompress.IronCompressResult bytes = await ReadPageDataAsync(ph);
+            using(RentedBytes bytes = await ReadPageDataAsync(ph)) {
+                if(ph.DataPageHeader == null) {
+                    throw new ParquetException($"column '{_dataField.Path}' is missing data page header, file is corrupt");
+                }
 
-            if(ph.DataPageHeader == null) {
-                throw new ParquetException($"column '{_dataField.Path}' is missing data page header, file is corrupt");
+                int dataUsed = 0;
+                int allValueCount = (int)_thriftColumnChunk.MetaData!.NumValues;
+                int pageValueCount = ph.DataPageHeader.NumValues;
+
+                if(_dataField.MaxRepetitionLevel > 0) {
+                    int levelsRead = ReadLevels(
+                        bytes.AsSpan(), _dataField.MaxRepetitionLevel,
+                        pc.GetWriteableRepetitionLevelSpan(),
+                        pageValueCount, null, out int usedLength);
+                    pc.MarkRepetitionLevels(levelsRead);
+                    dataUsed += usedLength;
+                }
+
+                int defNulls = 0;
+                if(_dataField.MaxDefinitionLevel > 0) {
+                    int levelsRead = ReadLevels(
+                        bytes.AsSpan().Slice(dataUsed), _dataField.MaxDefinitionLevel,
+                        pc.GetWriteableDefinitionLevelSpan(),
+                        pageValueCount, null, out int usedLength);
+                    dataUsed += usedLength;
+                    defNulls = pc.MarkDefinitionLevels(levelsRead, _dataField.MaxDefinitionLevel);
+                }
+
+                int dataElementCount = pageValueCount - defNulls;
+
+                ReadColumn(
+                    bytes.AsSpan().Slice(dataUsed),
+                    ph.DataPageHeader.Encoding,
+                    allValueCount, dataElementCount,
+                    pc);
             }
-
-            int dataUsed = 0;
-            int allValueCount = (int)_thriftColumnChunk.MetaData!.NumValues;
-            int pageValueCount = ph.DataPageHeader.NumValues;
-
-            if(_dataField.MaxRepetitionLevel > 0) {
-                //todo: use rented buffers, but be aware that rented length can be more than requested so underlying logic relying on array length must be fixed too.
-
-                int levelsRead = ReadLevels(
-                    bytes.AsSpan(), _dataField.MaxRepetitionLevel,
-                    pc.GetWriteableRepetitionLevelSpan(),
-                    pageValueCount, null, out int usedLength);
-                pc.MarkRepetitionLevels(levelsRead);
-                dataUsed += usedLength;
-            }
-
-            int defNulls = 0;
-            if(_dataField.MaxDefinitionLevel > 0) {
-                int levelsRead = ReadLevels(
-                    bytes.AsSpan().Slice(dataUsed), _dataField.MaxDefinitionLevel,
-                    pc.GetWriteableDefinitionLevelSpan(),
-                    pageValueCount, null, out int usedLength);
-                dataUsed += usedLength;
-                defNulls = pc.MarkDefinitionLevels(levelsRead, _dataField.MaxDefinitionLevel);
-            }
-
-            // try to be clever to detect how many elements to read
-            int dataElementCount = pageValueCount - defNulls;
-
-            ReadColumn(
-                bytes.AsSpan().Slice(dataUsed),
-                ph.DataPageHeader.Encoding,
-                allValueCount, dataElementCount,
-                pc);
         }
 
         private async Task ReadDataPageV2Async(PageHeader ph, PackedColumn pc, long maxValues) {
@@ -221,48 +234,67 @@ namespace Parquet.File {
                 throw new ParquetException($"column '{_dataField.Path}' is missing data page header, file is corrupt");
             }
 
-            using IronCompress.IronCompressResult bytes = await ReadPageDataV2Async(ph);
-            int dataUsed = 0;
+            using(RentedBytes bytes = await ReadPageDataV2Async(ph)) {
+                int dataUsed = 0;
 
-            if(_dataField.MaxRepetitionLevel > 0) {
-                //todo: use rented buffers, but be aware that rented length can be more than requested so underlying logic relying on array length must be fixed too.
-                int levelsRead = ReadLevels(bytes.AsSpan(),
-                    _dataField.MaxRepetitionLevel, pc.GetWriteableRepetitionLevelSpan(),
-                    ph.DataPageHeaderV2.NumValues, ph.DataPageHeaderV2.RepetitionLevelsByteLength, out int usedLength);
-                dataUsed += usedLength;
-                pc.MarkRepetitionLevels(levelsRead);
+                if(_dataField.MaxRepetitionLevel > 0) {
+                    int levelsRead = ReadLevels(
+                        bytes.AsSpan(),
+                        _dataField.MaxRepetitionLevel,
+                        pc.GetWriteableRepetitionLevelSpan(),
+                        ph.DataPageHeaderV2.NumValues,
+                        ph.DataPageHeaderV2.RepetitionLevelsByteLength,
+                        out int usedLength);
+                    dataUsed += usedLength;
+                    pc.MarkRepetitionLevels(levelsRead);
+                }
+
+                if(_dataField.MaxDefinitionLevel > 0) {
+                    int levelsRead = ReadLevels(
+                        bytes.AsSpan().Slice(dataUsed),
+                        _dataField.MaxDefinitionLevel,
+                        pc.GetWriteableDefinitionLevelSpan(),
+                        ph.DataPageHeaderV2.NumValues,
+                        ph.DataPageHeaderV2.DefinitionLevelsByteLength,
+                        out int usedLength);
+                    dataUsed += usedLength;
+                    pc.MarkDefinitionLevels(levelsRead);
+                }
+
+                int maxReadCount = ph.DataPageHeaderV2.NumValues - ph.DataPageHeaderV2.NumNulls;
+
+                bool isCompressedFlag = ph.DataPageHeaderV2.IsCompressed ?? false;
+                bool metaSaysUncompressed = _thriftColumnChunk.MetaData!.Codec == CompressionCodec.UNCOMPRESSED;
+
+                if(!isCompressedFlag || metaSaysUncompressed) {
+                    ReadColumn(bytes.AsSpan().Slice(dataUsed), ph.DataPageHeaderV2.Encoding, maxValues, maxReadCount, pc);
+                    return;
+                }
+
+                int dataSize = ph.CompressedPageSize
+                               - ph.DataPageHeaderV2.RepetitionLevelsByteLength
+                               - ph.DataPageHeaderV2.DefinitionLevelsByteLength;
+
+                int decompressedSize = ph.UncompressedPageSize
+                                       - ph.DataPageHeaderV2.RepetitionLevelsByteLength
+                                       - ph.DataPageHeaderV2.DefinitionLevelsByteLength;
+
+                CompressionMethod method = (CompressionMethod)(int)_thriftColumnChunk.MetaData.Codec;
+                if(method != CompressionMethod.Gzip) {
+                    throw new NotSupportedException($"Compression codec '{_thriftColumnChunk.MetaData.Codec}' is not supported. Only GZip is supported.");
+                }
+
+                byte[] decompressed = Compressor.Decompress(
+                    method,
+                    bytes.AsSpan().Slice(dataUsed, dataSize),
+                    decompressedSize);
+
+                ReadColumn(
+                    new Span<byte>(decompressed, 0, decompressed.Length),
+                    ph.DataPageHeaderV2.Encoding,
+                    maxValues, maxReadCount,
+                    pc);
             }
-
-            if(_dataField.MaxDefinitionLevel > 0) {
-                int levelsRead = ReadLevels(bytes.AsSpan().Slice(dataUsed),
-                    _dataField.MaxDefinitionLevel, pc.GetWriteableDefinitionLevelSpan(),
-                    ph.DataPageHeaderV2.NumValues, ph.DataPageHeaderV2.DefinitionLevelsByteLength, out int usedLength);
-                dataUsed += usedLength;
-                pc.MarkDefinitionLevels(levelsRead);
-            }
-
-            int maxReadCount = ph.DataPageHeaderV2.NumValues - ph.DataPageHeaderV2.NumNulls;
-
-            if((!(ph.DataPageHeaderV2.IsCompressed ?? false)) || _thriftColumnChunk.MetaData!.Codec == CompressionCodec.UNCOMPRESSED) {
-                ReadColumn(bytes.AsSpan().Slice(dataUsed), ph.DataPageHeaderV2.Encoding, maxValues, maxReadCount, pc);
-                return;
-            }
-
-            int dataSize = ph.CompressedPageSize - ph.DataPageHeaderV2.RepetitionLevelsByteLength -
-                           ph.DataPageHeaderV2.DefinitionLevelsByteLength;
-
-            int decompressedSize = ph.UncompressedPageSize - ph.DataPageHeaderV2.RepetitionLevelsByteLength -
-                                   ph.DataPageHeaderV2.DefinitionLevelsByteLength;
-
-            IronCompress.IronCompressResult decompressedDataByes = Compressor.Decompress(
-                (CompressionMethod)(int)_thriftColumnChunk.MetaData.Codec,
-                bytes.AsSpan().Slice(dataUsed),
-                decompressedSize);
-
-            ReadColumn(decompressedDataByes.AsSpan(),
-                ph.DataPageHeaderV2.Encoding,
-                maxValues, maxReadCount,
-                pc);
         }
 
         private int ReadLevels(Span<byte> s, int maxLevel,

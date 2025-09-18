@@ -68,7 +68,7 @@ namespace Parquet.Test {
             var ms = new MemoryStream();
 
             using(ParquetWriter writer = await ParquetWriter.CreateAsync(new ParquetSchema(id), ms, new ParquetOptions() {
-                EncryptionKey = key
+                EncryptionKey = key,
             })) {
                 using(ParquetRowGroupWriter rg = writer.CreateRowGroup()) {
                     await rg.WriteColumnAsync(new DataColumn(id, new int[] { 1 }));
@@ -97,7 +97,7 @@ namespace Parquet.Test {
 
                 using(ParquetRowGroupReader rg = reader.OpenRowGroupReader(0)) {
                     Assert.Equal(1, rg.RowCount);
-                    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
+                    await Assert.ThrowsAsync<InvalidDataException>(async () => {
                         DataColumn dc = await rg.ReadColumnAsync(id);
                     });
                 }

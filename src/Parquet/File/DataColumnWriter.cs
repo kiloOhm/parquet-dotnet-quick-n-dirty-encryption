@@ -4,7 +4,6 @@ using System.IO;
 using System.IO.Compression;
 using System.Threading;
 using System.Threading.Tasks;
-using IronCompress;
 using Microsoft.IO;
 using Parquet.Data;
 using Parquet.Encodings;
@@ -75,21 +74,22 @@ namespace Parquet.File {
             ColumnSizes cs,
             CancellationToken cancellationToken) {
 
-            using IronCompress.IronCompressResult compressedData = _compressionMethod == CompressionMethod.None
-                ? new IronCompress.IronCompressResult(data.ToArray(), Codec.Snappy, false)
-                : Compressor.Compress(_compressionMethod, data.ToArray(), _compressionLevel);
+            byte[] payload;
+            if(_compressionMethod == CompressionMethod.None) {
+                payload = data.ToArray();
+            } else {
+                if(_compressionMethod != CompressionMethod.Gzip) {
+                    throw new NotSupportedException("Only GZip compression is supported after removing IronCompress.");
+                }
 
-            int payloadLen = compressedData.AsSpan().Length; // Prefer a real "Length" property if IronCompress has it
-            Span<byte> payloadSpan = compressedData.AsSpan().Slice(0, payloadLen);
+                payload = Compressor.Compress(_compressionMethod, data.ToArray(), _compressionLevel);
+            }
 
             ph.UncompressedPageSize = (int)data.Length;
-            ph.CompressedPageSize = payloadLen;
+            ph.CompressedPageSize = payload.Length;
 
             byte[]? iv_bytes = this._options.AES_IV_BYTES;
             byte[]? key_bytes = this._options.ENC_KEY_BYTES;
-
-            // Copy payloadSpan to a byte[] so it can be used after await
-            byte[] payload = payloadSpan.ToArray();
 
             if (iv_bytes != null && key_bytes != null)
             {

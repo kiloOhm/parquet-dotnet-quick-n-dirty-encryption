@@ -54,6 +54,18 @@ namespace Parquet {
         /// <returns></returns>
         /// <exception cref="ParquetException"></exception>
         DataColumnStatistics? GetStatistics(DataField field);
+
+        /// <summary>
+        /// Uses the column chunk's Bloom filter (if present) to check whether this row group
+        /// might contain at least one value equal to <paramref name="value"/> for <paramref name="field"/>.
+        /// Returns <c>false</c> iff the Bloom filter definitively rules it out.
+        /// If a Bloom filter is not present or disabled, returns <c>true</c> (i.e., "don't prune").
+        /// </summary>
+        /// <remarks>
+        /// This does not read data pages; it only inspects the Bloom filter area.
+        /// Stream position is preserved.
+        /// </remarks>
+        bool MightMatchEquals<T>(DataField field, T value);
     }
 
     /// <summary>
@@ -137,10 +149,33 @@ namespace Parquet {
             return cc.MetaData.KeyValueMetadata.ToDictionary(kv => kv.Key, kv => kv.Value!);
         }
 
+        /// <inheritdoc/>
+        public bool MightMatchEquals<T>(DataField field, T value) {
+            if(field is null)
+                throw new ArgumentNullException(nameof(field));
+
+            ColumnChunk cc = GetMetadata(field)
+                ?? throw new ParquetException($"'{field.Path}' does not exist in this file");
+
+            // Prepare stats (may be null in metadata); safe default is no nulls/distincts
+            DataColumnStatistics stats = ReadColumnStatistics(cc) ?? new DataColumnStatistics(null, null, null, null);
+
+            // Preserve stream position; bloom probing may seek.
+            long pos = _stream.CanSeek ? _stream.Position : 0;
+            try {
+                var dcr = new DataColumnReader(field, _stream, cc, stats, _footer, _options!);
+                return dcr.MightMatchEquals(value);
+            } finally {
+                if(_stream.CanSeek)
+                    _stream.Seek(pos, SeekOrigin.Begin);
+            }
+        }
+
         private DataColumnStatistics? ReadColumnStatistics(ColumnChunk cc) {
 
             Statistics? st = cc.MetaData!.Statistics;
-            if(st == null) return null;
+            if(st == null)
+                return null;
 
             SchemaElement? se = _footer.GetSchemaElement(cc) ?? throw new ArgumentException("can't find schema element", nameof(cc));
 
